@@ -14,6 +14,7 @@ import numpy as np
 import filter_daily_flucts as ffd
 import os
 from pandas.stats.api import ols
+import multiprocessing as mp
 #import statsmodels.api as sm
 def get_rt_window(rt_window_length,roll_window_size,num_roll_window_ops,end=''):
     
@@ -148,7 +149,7 @@ def compute_node_inst_vel(xz,xy,roll_window_numpts):
     #returning rounded-off values
     return np.round(vel_xz,4), np.round(vel_xy,4)
     
-def compute_col_pos(xz,xy,col_pos_end, col_pos_interval, col_pos_number):
+def compute_col_pos(xz,xy,col_pos_end, col_pos_interval, col_pos_number,seg_len):
 
     
     #computing x from xz and xy
@@ -196,7 +197,7 @@ def compute_col_pos(xz,xy,col_pos_end, col_pos_interval, col_pos_number):
 def df_to_out(colname,xz,xy,
               vel_xz,vel_xy,
               cs_x,cs_xz,cs_xy,
-              proc_file_path,
+#              proc_file_path,
               CSVFormat):
 
 
@@ -240,7 +241,7 @@ def df_zero_initial_row(df):
     #from all the rows of the dataframe
     return np.round(df-df.loc[(df.index==df.index[0])].values.squeeze(),4)
     
-def node_alert(colname, xz_tilt, xy_tilt, xz_vel, xy_vel, num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,end):
+def node_alert(colname, xz_tilt, xy_tilt, xz_vel, xy_vel, num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,end,colarrange):
 
    #initializing DataFrame object, alert
     alert=pd.DataFrame(data=None)
@@ -440,10 +441,10 @@ def getmode(li):
     return n    
     
 def alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,
-                     num_nodes_to_check,end,proc_file_path,CSVFormat):
+                     num_nodes_to_check,end,CSVFormat,colarrange):
  
     #processing node-level alerts
-    alert_out=node_alert(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,end)
+    alert_out=node_alert(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,end,colarrange)
 
 #    print alert_out
     #processing column-level alerts
@@ -458,10 +459,11 @@ def alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_v
     
     return alert_out
                              
-def generate_proc(colname, num_nodes, seg_len, custom_end,f=False,for_plots=False):
+def generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops,f=False,for_plots=False):
     
     #1. setting date boundaries for real-time monitoring window
 #    roll_window_numpts=int(1+roll_window_length/data_dt)
+
     roll_window_numpts=int(1+roll_window_length/data_dt)
     end, start, offsetstart,monwin=get_rt_window(rt_window_length,roll_window_numpts,num_roll_window_ops,custom_end)
 
@@ -540,95 +542,99 @@ def time_site(target,df_sa):
         print "Error. Target > len(df_sa)"
         
 
-io = cfg.config()
-num_roll_window_ops = io.io.num_roll_window_ops
-roll_window_length = io.io.roll_window_length
-data_dt = io.io.data_dt
-rt_window_length = io.io.rt_window_length
 
-roll_window_numpts=int(1+roll_window_length/data_dt)
-
-col_pos_interval = io.io.col_pos_interval
-col_pos_num = io.io.num_col_pos
-to_fill = io.io.to_fill
-to_smooth = io.io.to_smooth
-output_path = (__file__)
-output_file_path = (__file__)
-proc_file_path = (__file__)
-CSVFormat = '.csv'
-PrintProc = io.io.printproc
-
-T_disp = io.io.t_disp
-T_velL2 = io.io.t_vell2 
-T_velL3 = io.io.t_vell3
-k_ac_ax = io.io.k_ac_ax
-num_nodes_to_check = io.io.num_nodes_to_check
-colarrange = io.io.alerteval_colarrange.split(',')
-summary = pd.DataFrame()
-node_status = qdb.GetNodeStatus(1)
-
-last_target = 412
-
-for i in range(0,last_target):
-    try:
-        sites,custom_end = ffd.aim(i)
-        sensorlist = qdb.GetSensorList(sites)
-        for s in sensorlist:
-        
-            last_col=sensorlist[-1:]
-            last_col=last_col[0]
-            last_col=last_col.name
-            
-            # getting current column properties
-            colname,num_nodes,seg_len= s.name,s.nos,s.seglen
-        
-            # list of working nodes     
-            node_list = range(1, num_nodes + 1)
-            not_working = node_status.loc[(node_status.site == colname) & (node_status.node <= num_nodes)]
-            not_working_nodes = not_working['node'].values  
-            for i in not_working_nodes:
-                node_list.remove(i)
-        
-            proc_monitoring,monwin=generate_proc(colname, num_nodes, seg_len, custom_end)    
-            
-            xz_series_list,xy_series_list = create_series_list(proc_monitoring,monwin,colname,num_nodes)
-    #            print "create_series_list tapos na"
-            # create, fill and smooth dataframes from series lists
-            xz=create_fill_smooth_df(xz_series_list,num_nodes,monwin, roll_window_numpts,to_fill,to_smooth)
-            xy=create_fill_smooth_df(xy_series_list,num_nodes,monwin, roll_window_numpts,to_fill,to_smooth)
-            
-            # computing instantaneous velocity
-            vel_xz, vel_xy = compute_node_inst_vel(xz,xy,roll_window_numpts)
-            
-            # computing cumulative displacements
-            cs_x, cs_xz, cs_xy=compute_col_pos(xz,xy,monwin.index[-1], col_pos_interval, col_pos_num)
-        
-            # processing dataframes for output
-            xz,xy,xz_0off,xy_0off,vel_xz,vel_xy, vel_xz_0off, vel_xy_0off,cs_x,cs_xz,cs_xy,cs_xz_0,cs_xy_0 = df_to_out(colname,xz,xy,
-                                                                                                                       vel_xz,vel_xy,
-                                                                                                                       cs_x,cs_xz,cs_xy,
-                                                                                                                       proc_file_path,
-                                                                                                                       CSVFormat)
-                                                                                                                                  
-            # Alert generation
-            alert_out=alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,
-                                       num_nodes_to_check,custom_end,proc_file_path,CSVFormat)
+def worker(first_target,last_target):
+    #load all global variables?
+    summary = pd.DataFrame()
+    s_f = pd.DataFrame()
+    s_a = pd.DataFrame()
+    io = cfg.config()
     
-        alert_out = alert_out.reset_index(level = ['id'])
-        alert_out = alert_out[['id','disp_alert','vel_alert','node_alert','col_alert']]
-        alert_out = alert_out[(alert_out['vel_alert'] > 0 ) | (alert_out.node_alert == 'l2')]
-        alert_out = alert_out[alert_out.id == 1]
-        alert_out['site'] = sites
-        summary = pd.concat((summary,alert_out),axis = 0)
-    except:
-        print "Error recreating alarm."
-        continue
-print "--------------------Filtering chenes----------------------"
-print "--------------------Store yung mga nafilter----------------------"
-s_f = pd.DataFrame()
-s_a = pd.DataFrame()
-for j in range(0,len(summary)):
-    try:
+    num_roll_window_ops = io.io.num_roll_window_ops
+    roll_window_length = io.io.roll_window_length
+    data_dt = io.io.data_dt
+    rt_window_length = io.io.rt_window_length
+    
+    roll_window_numpts=int(1+roll_window_length/data_dt)
+    
+    col_pos_interval = io.io.col_pos_interval
+    col_pos_num = io.io.num_col_pos
+    to_fill = io.io.to_fill
+    to_smooth = io.io.to_smooth
+#    output_path = (__file__)
+#    output_file_path = (__file__)
+#    proc_file_path = (__file__)
+    CSVFormat = '.csv'
+#    PrintProc = io.io.printproc
+    
+    T_disp = io.io.t_disp
+    T_velL2 = io.io.t_vell2 
+    T_velL3 = io.io.t_vell3
+    k_ac_ax = io.io.k_ac_ax
+    num_nodes_to_check = io.io.num_nodes_to_check
+    colarrange = io.io.alerteval_colarrange.split(',')   
+    node_status = qdb.GetNodeStatus(1)
+
+    for i in range(first_target,last_target):
+        try:
+            sites,custom_end = ffd.aim(i)
+            sensorlist = qdb.GetSensorList(sites)
+            for s in sensorlist:
+            
+                last_col=sensorlist[-1:]
+                last_col=last_col[0]
+                last_col=last_col.name
+                
+                # getting current column properties
+                colname,num_nodes,seg_len= s.name,s.nos,s.seglen
+            
+                # list of working nodes     
+                node_list = range(1, num_nodes + 1)
+                not_working = node_status.loc[(node_status.site == colname) & (node_status.node <= num_nodes)]
+                not_working_nodes = not_working['node'].values  
+                for i in not_working_nodes:
+                    node_list.remove(i)
+            
+                proc_monitoring,monwin=generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops)    
+                
+                xz_series_list,xy_series_list = create_series_list(proc_monitoring,monwin,colname,num_nodes)
+        #            print "create_series_list tapos na"
+                # create, fill and smooth dataframes from series lists
+                xz=create_fill_smooth_df(xz_series_list,num_nodes,monwin, roll_window_numpts,to_fill,to_smooth)
+                xy=create_fill_smooth_df(xy_series_list,num_nodes,monwin, roll_window_numpts,to_fill,to_smooth)
+                
+                # computing instantaneous velocity
+                vel_xz, vel_xy = compute_node_inst_vel(xz,xy,roll_window_numpts)
+                
+                # computing cumulative displacements
+                cs_x, cs_xz, cs_xy=compute_col_pos(xz,xy,monwin.index[-1], col_pos_interval, col_pos_num,seg_len)
+            
+                # processing dataframes for output
+                xz,xy,xz_0off,xy_0off,vel_xz,vel_xy, vel_xz_0off, vel_xy_0off,cs_x,cs_xz,cs_xy,cs_xz_0,cs_xy_0 = df_to_out(colname,xz,xy,
+                                                                                                                           vel_xz,vel_xy,
+                                                                                                                           cs_x,cs_xz,cs_xy,
+    #                                                                                                                       proc_file_path,
+                                                                                                                           CSVFormat)
+                                                                                                                                      
+                # Alert generation
+    #            alert_out=alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,
+    #                                       num_nodes_to_check,custom_end,CSVFormat,colarrange)
+                alert_out=alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,num_nodes_to_check,custom_end,CSVFormat,colarrange)                                                                                                                                  
+        
+            alert_out = alert_out.reset_index(level = ['id'])
+            alert_out = alert_out[['id','disp_alert','vel_alert','node_alert','col_alert']]
+            alert_out = alert_out[(alert_out['vel_alert'] > 0 ) | (alert_out.node_alert == 'l2')]
+            alert_out = alert_out[alert_out.id == 1]
+            alert_out['site'] = sites
+            summary = pd.concat((summary,alert_out),axis = 0)
+        except:
+            print "Error recreating alarm."
+            continue
+    print "--------------------Filtering chenes----------------------"
+    print "--------------------Store yung mga nafilter----------------------"
+    
+    for j in range(0,len(summary)):
+#        try:
         sites,custom_end = time_site(j,summary)
         sensorlist = qdb.GetSensorList(sites)
         for s in sensorlist:
@@ -647,7 +653,8 @@ for j in range(0,len(summary)):
             for i in not_working_nodes:
                 node_list.remove(i)
         
-            proc_monitoring,monwin=generate_proc(colname, num_nodes, seg_len, custom_end,f=True)
+#            proc_monitoring,monwin=generate_proc(colname, num_nodes, seg_len, custom_end,f=True)
+            proc_monitoring,monwin=generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops,f=True)    
             
             
             xz_series_list,xy_series_list = create_series_list(proc_monitoring,monwin,colname,num_nodes)
@@ -659,18 +666,18 @@ for j in range(0,len(summary)):
             vel_xz, vel_xy = compute_node_inst_vel(xz,xy,roll_window_numpts)
             
             # computing cumulative displacements
-            cs_x, cs_xz, cs_xy=compute_col_pos(xz,xy,monwin.index[-1], col_pos_interval, col_pos_num)
+            cs_x, cs_xz, cs_xy=compute_col_pos(xz,xy,monwin.index[-1], col_pos_interval, col_pos_num,seg_len)
         
             # processing dataframes for output
             xz,xy,xz_0off,xy_0off,vel_xz,vel_xy, vel_xz_0off, vel_xy_0off,cs_x,cs_xz,cs_xy,cs_xz_0,cs_xy_0 = df_to_out(colname,xz,xy,
                                                                                                                        vel_xz,vel_xy,
                                                                                                                        cs_x,cs_xz,cs_xy,
-                                                                                                                       proc_file_path,
+#                                                                                                                       proc_file_path,
                                                                                                                        CSVFormat)
                                                                                                                                   
             # Alert generation
             alert_out=alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,
-                                       num_nodes_to_check,custom_end,proc_file_path,CSVFormat)
+                                       num_nodes_to_check,custom_end,CSVFormat,colarrange)
         #    print alert_out
             
         
@@ -689,74 +696,83 @@ for j in range(0,len(summary)):
         b_out = b_out[b_out.id == 1]
         b_out['site'] = sites
         s_a = pd.concat((s_a,b_out),axis = 0)
-    except:
-        print "Error."
-        continue
-
-print "################# Drawing! Dahil drawing ka! ##################"
-print "################# Idrawing lahat ng nafilter! ##################"
-
-for k in range(0,len(s_f)):
-    try:
-        sites,custom_end = time_site(k,s_f)
-        ce =  custom_end.strftime("%y_%m_%d__%H_%M")
-        fname = "FILTERED_" +str(sites) + "_" + ce + "_045_045"
-        sensorlist = qdb.GetSensorList(sites)
-        
-        for s in sensorlist:
-            last_col=sensorlist[-1:]
-            last_col=last_col[0]
-            last_col=last_col.name
+#        except:
+#            print "Error."
+#            continue
+    
+    print "################# Drawing! Dahil drawing ka! ##################"
+    print "################# Idrawing lahat ng nafilter! ##################"
+    
+    for k in range(0,len(s_f)):
+        try:
+            sites,custom_end = time_site(k,s_f)
+            ce =  custom_end.strftime("%y_%m_%d__%H_%M")
+            fname = "FILTERED_" +str(sites) + "_" + ce + "_045_045"
+            sensorlist = qdb.GetSensorList(sites)
             
-            # getting current column properties
-            colname,num_nodes,seg_len= s.name,s.nos,s.seglen
+            for s in sensorlist:
+                last_col=sensorlist[-1:]
+                last_col=last_col[0]
+                last_col=last_col.name
+                
+                # getting current column properties
+                colname,num_nodes,seg_len= s.name,s.nos,s.seglen
+            
+                # list of working nodes     
+        #            node_list = range(1, num_nodes + 1)
+        #            not_working = node_status.loc[(node_status.site == colname) & (node_status.node <= num_nodes)]
+        #            not_working_nodes = not_working['node'].values  
+        #            for i in not_working_nodes:
+        #                node_list.remove(i)
+            
+                # importing proc_monitoring file of current column to dataframe
+            #    try:
+            #            print "proc_monitoring here: "
+                proc_monitoring=generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops,f=True,for_plots=True)
+            #    print proc_monitoring
+                proc_monitoring = proc_monitoring[proc_monitoring.id == 1]
+                ffd.plotter(proc_monitoring,fname=fname)
+        except:
+            print "Error plotting Filtered."
         
-            # list of working nodes     
+    for k in range(0,len(s_a)):
+        try:
+            sites,custom_end = time_site(k,s_a)
+            ce =  custom_end.strftime("%y_%m_%d__%H_%M")
+            fname = "ALARMS_" +str(sites) + "_" + ce + "_045_045"
+            
+            sensorlist = qdb.GetSensorList(sites)
+            for s in sensorlist:
+                
+                last_col=sensorlist[-1:]
+                last_col=last_col[0]
+                last_col=last_col.name
+                
+                # getting current column properties
+                colname,num_nodes,seg_len= s.name,s.nos,s.seglen
+            
+                # list of working nodes     
     #            node_list = range(1, num_nodes + 1)
     #            not_working = node_status.loc[(node_status.site == colname) & (node_status.node <= num_nodes)]
     #            not_working_nodes = not_working['node'].values  
     #            for i in not_working_nodes:
     #                node_list.remove(i)
-        
-            # importing proc_monitoring file of current column to dataframe
-        #    try:
-        #            print "proc_monitoring here: "
-            proc_monitoring=generate_proc(colname, num_nodes, seg_len, custom_end,f=True,for_plots=True)
-        #    print proc_monitoring
-            proc_monitoring = proc_monitoring[proc_monitoring.id == 1]
-            ffd.plotter(proc_monitoring,fname=fname)
-    except:
-        print "Error plotting Filtered."
+            
+                # importing proc_monitoring file of current column to dataframe
+            #    try:
+            #            print "proc_monitoring here: "
+                proc_monitoring=generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops,f=True,for_plots=True)
+            #    print proc_monitoring
+                proc_monitoring = proc_monitoring[proc_monitoring.id == 1]
+                ffd.plotter(proc_monitoring,fname=fname)
+        except:
+            print "Error plotting Alarms."      
+            
+
+if __name__ == '__main__':    
     
-for k in range(0,len(s_a)):
-    try:
-        sites,custom_end = time_site(k,s_a)
-        ce =  custom_end.strftime("%y_%m_%d__%H_%M")
-        fname = "ALARMS_" +str(sites) + "_" + ce + "_045_045"
-        
-        sensorlist = qdb.GetSensorList(sites)
-        for s in sensorlist:
-            
-            last_col=sensorlist[-1:]
-            last_col=last_col[0]
-            last_col=last_col.name
-            
-            # getting current column properties
-            colname,num_nodes,seg_len= s.name,s.nos,s.seglen
-        
-            # list of working nodes     
-#            node_list = range(1, num_nodes + 1)
-#            not_working = node_status.loc[(node_status.site == colname) & (node_status.node <= num_nodes)]
-#            not_working_nodes = not_working['node'].values  
-#            for i in not_working_nodes:
-#                node_list.remove(i)
-        
-            # importing proc_monitoring file of current column to dataframe
-        #    try:
-        #            print "proc_monitoring here: "
-            proc_monitoring=generate_proc(colname, num_nodes, seg_len, custom_end,f=True,for_plots=True)
-        #    print proc_monitoring
-            proc_monitoring = proc_monitoring[proc_monitoring.id == 1]
-            ffd.plotter(proc_monitoring,fname=fname)
-    except:
-        print "Error plotting Alarms."      
+    pool = mp.Pool(mp.cpu_count()) #use all available cores, otherwise specify the number you want as an argument
+    for i in xrange(0, 412):
+        pool.apply_async(worker, args=(i,i+1))
+    pool.close()
+    pool.join()
