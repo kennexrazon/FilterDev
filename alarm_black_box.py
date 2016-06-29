@@ -567,9 +567,9 @@ colarrange = io.io.alerteval_colarrange.split(',')
 summary = pd.DataFrame()
 node_status = qdb.GetNodeStatus(1)
 
-last_target = 50
+last_target = 412
 
-for i in range(1,last_target):
+for i in range(0,last_target):
     try:
         sites,custom_end = ffd.aim(i)
         sensorlist = qdb.GetSensorList(sites)
@@ -700,7 +700,7 @@ for k in range(0,len(s_f)):
     try:
         sites,custom_end = time_site(k,s_f)
         ce =  custom_end.strftime("%y_%m_%d__%H_%M")
-        fname = "FILTERED_" +str(sites) + "_" + ce + "_075_low"
+        fname = "FILTERED_" +str(sites) + "_" + ce + "_045_045"
         sensorlist = qdb.GetSensorList(sites)
         
         for s in sensorlist:
@@ -712,11 +712,11 @@ for k in range(0,len(s_f)):
             colname,num_nodes,seg_len= s.name,s.nos,s.seglen
         
             # list of working nodes     
-#            node_list = range(1, num_nodes + 1)
-#            not_working = node_status.loc[(node_status.site == colname) & (node_status.node <= num_nodes)]
-#            not_working_nodes = not_working['node'].values  
-#            for i in not_working_nodes:
-#                node_list.remove(i)
+    #            node_list = range(1, num_nodes + 1)
+    #            not_working = node_status.loc[(node_status.site == colname) & (node_status.node <= num_nodes)]
+    #            not_working_nodes = not_working['node'].values  
+    #            for i in not_working_nodes:
+    #                node_list.remove(i)
         
             # importing proc_monitoring file of current column to dataframe
         #    try:
@@ -732,7 +732,7 @@ for k in range(0,len(s_a)):
     try:
         sites,custom_end = time_site(k,s_a)
         ce =  custom_end.strftime("%y_%m_%d__%H_%M")
-        fname = "ALARMS_" +str(sites) + "_" + ce + "_075_low"
+        fname = "ALARMS_" +str(sites) + "_" + ce + "_045_045"
         
         sensorlist = qdb.GetSensorList(sites)
         for s in sensorlist:
