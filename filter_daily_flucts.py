@@ -23,7 +23,7 @@ def filt(df,keep_orig=False):
     df1 = df1[df1.id == 1]
         
     f1 = 1.0 #target freq
-    lower = 0.75
+    lower = 0.45
     upper = 0.45
 #    f2 = 2.0
     sf = 48.0 #sampling freq
@@ -31,15 +31,15 @@ def filt(df,keep_orig=False):
 #    As = 2.0
     butter_order = 5
     
-#    ws = [((f1-lower)/(sf*0.5)),((f1+upper)/(0.5*sf))]
+    ws = [((f1-lower)/(sf*0.5)),((f1+upper)/(0.5*sf))]
     
-#    b,a = ss.butter(butter_order,ws,'bandstop')
-    b,a = ss.butter(butter_order,1.0-lower,'low')
+    b,a = ss.butter(butter_order,ws,'bandstop')
+#    b,a = ss.butter(butter_order,1.0-lower,'low')
 
     df1['x'] = ss.filtfilt(b,a,df1.x,axis=-1)
     df1['y'] = ss.filtfilt(b,a,df1.y,axis=-1)
     df1['z'] = ss.filtfilt(b,a,df1.z,axis=-1)
-    for i in range (2,24):
+    for i in range (1,24):
         ws = [(((f1*i)-lower)/(sf*0.5)),((f1*i)+upper)/(0.5*sf)]
         b,a = ss.butter(butter_order,ws,'bandstop')
         df1['x'] = ss.filtfilt(b,a,df1.x,axis=-1)
@@ -74,10 +74,7 @@ def plotter(df1,fname=''):
     ax1.plot(df1.ts,df1.xorig,linewidth=0.2)
     ax2.plot(df1.ts,df1.yorig,linewidth=0.2)
     ax3.plot(df1.ts,df1.zorig,linewidth=0.2)
-    #ax2.plot(df1.ts,df1.y, color = 'red', linestyle='-', marker='')
-    #ax3.plot(df1.ts,df1.z, color = 'green', linestyle='-', marker='')
-    
-    
+        
     ax1.axes.get_xaxis().set_ticks([])    
     ax2.axes.get_xaxis().set_ticks([])
     ax4.axes.get_xaxis().set_ticks([]) 
@@ -154,6 +151,13 @@ def plotter(df1,fname=''):
     ax1.plot(df1.ts,df1.x)
     ax2.plot(df1.ts,df1.y)
     ax3.plot(df1.ts,df1.z)
+    # compute rolling average (48)
+    
+    df1[['xm','ym','zm']] = df1[['xorig','yorig','zorig']].rolling(window=48,min_periods=1).mean()
+
+    ax1.plot(df1.ts,df1.xm,linewidth=0.4)
+    ax2.plot(df1.ts,df1.ym,linewidth=0.4)
+    ax3.plot(df1.ts,df1.zm,linewidth=0.4) 
     
     plt.tight_layout()
     if (len(fname) > 1):
