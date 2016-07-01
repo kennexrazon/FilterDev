@@ -12,7 +12,7 @@ from datetime import datetime, date, time, timedelta
 import cfgfileio as cfg
 import numpy as np
 import filter_daily_flucts as ffd
-import os
+#import os
 from pandas.stats.api import ols
 import multiprocessing as mp
 #import statsmodels.api as sm
@@ -459,30 +459,40 @@ def alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_v
     
     return alert_out
                              
-def generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops,f=False,for_plots=False):
+def generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops,filt=False,for_plots=False):
     
     #1. setting date boundaries for real-time monitoring window
 #    roll_window_numpts=int(1+roll_window_length/data_dt)
 
     roll_window_numpts=int(1+roll_window_length/data_dt)
     end, start, offsetstart,monwin=get_rt_window(rt_window_length,roll_window_numpts,num_roll_window_ops,custom_end)
-
+#    print "end inside generate_proc ------------>>>> %s" %str(end)
     # generating proc monitoring data for each site
     print "Generating PROC monitoring data for:-->> %s - %s <<--" %(str(colname),str(num_nodes))
 
 
     #3. getting accelerometer data for site 'colname'
-    monitoring=qdb.GetRawAccelData(colname,offsetstart)
-    if f:
+
+    if filt:
         if for_plots:
+            custom_start = offsetstart  - timedelta(days=4)
+            monitoring=qdb.GetRawAccelData(colname,custom_start)
             monitoring = ffd.filt(monitoring,keep_orig=True)
+            earliest_ts = monitoring.ts.min()
+            print "offsetstart ---------> %s " %str(offsetstart)
+            print "earliest_ts ---------> %s " %str(earliest_ts)
+            monitoring = monitoring[(monitoring.ts >= custom_start) & (monitoring.ts <= end)]
             return monitoring
         else:
+            custom_start = offsetstart  - timedelta(days=4)
+            monitoring=qdb.GetRawAccelData(colname,custom_start)
+#            monitoring=qdb.GetRawAccelData(colname,offsetstart)
             monitoring = ffd.filt(monitoring)
-
+            monitoring = monitoring[(monitoring.ts >= offsetstart) & (monitoring.ts <= end)]
     else:
-        monitoring = monitoring.loc[(monitoring.ts >= offsetstart) & (monitoring.ts <= end)]
-     
+        monitoring=qdb.GetRawAccelData(colname,offsetstart)
+        monitoring = monitoring[(monitoring.ts >= offsetstart) & (monitoring.ts <= end)]
+
     #3.1 identify the node ids with no data at start of monitoring window
     NodesNoInitVal=GetNodesWithNoInitialData(monitoring,num_nodes,offsetstart)
 #    print NodesNoInitVal
@@ -576,66 +586,67 @@ def worker(first_target,last_target):
     node_status = qdb.GetNodeStatus(1)
 
     for i in range(first_target,last_target):
-        try:
-            sites,custom_end = ffd.aim(i)
-            sensorlist = qdb.GetSensorList(sites)
-            for s in sensorlist:
-            
-                last_col=sensorlist[-1:]
-                last_col=last_col[0]
-                last_col=last_col.name
-                
-                # getting current column properties
-                colname,num_nodes,seg_len= s.name,s.nos,s.seglen
-            
-                # list of working nodes     
-                node_list = range(1, num_nodes + 1)
-                not_working = node_status.loc[(node_status.site == colname) & (node_status.node <= num_nodes)]
-                not_working_nodes = not_working['node'].values  
-                for i in not_working_nodes:
-                    node_list.remove(i)
-            
-                proc_monitoring,monwin=generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops)    
-                
-                xz_series_list,xy_series_list = create_series_list(proc_monitoring,monwin,colname,num_nodes)
-        #            print "create_series_list tapos na"
-                # create, fill and smooth dataframes from series lists
-                xz=create_fill_smooth_df(xz_series_list,num_nodes,monwin, roll_window_numpts,to_fill,to_smooth)
-                xy=create_fill_smooth_df(xy_series_list,num_nodes,monwin, roll_window_numpts,to_fill,to_smooth)
-                
-                # computing instantaneous velocity
-                vel_xz, vel_xy = compute_node_inst_vel(xz,xy,roll_window_numpts)
-                
-                # computing cumulative displacements
-                cs_x, cs_xz, cs_xy=compute_col_pos(xz,xy,monwin.index[-1], col_pos_interval, col_pos_num,seg_len)
-            
-                # processing dataframes for output
-                xz,xy,xz_0off,xy_0off,vel_xz,vel_xy, vel_xz_0off, vel_xy_0off,cs_x,cs_xz,cs_xy,cs_xz_0,cs_xy_0 = df_to_out(colname,xz,xy,
-                                                                                                                           vel_xz,vel_xy,
-                                                                                                                           cs_x,cs_xz,cs_xy,
-    #                                                                                                                       proc_file_path,
-                                                                                                                           CSVFormat)
-                                                                                                                                      
-                # Alert generation
-    #            alert_out=alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,
-    #                                       num_nodes_to_check,custom_end,CSVFormat,colarrange)
-                alert_out=alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,num_nodes_to_check,custom_end,CSVFormat,colarrange)                                                                                                                                  
+#        try:
+        sites,custom_end = ffd.aim(i)
+        sensorlist = qdb.GetSensorList(sites)
+        for s in sensorlist:
         
-            alert_out = alert_out.reset_index(level = ['id'])
-            alert_out = alert_out[['id','disp_alert','vel_alert','node_alert','col_alert']]
-            alert_out = alert_out[(alert_out['vel_alert'] > 0 ) | (alert_out.node_alert == 'l2')]
-            alert_out = alert_out[alert_out.id == 1]
-            alert_out['site'] = sites
-            summary = pd.concat((summary,alert_out),axis = 0)
-        except:
-            print "Error recreating alarm."
-            continue
+            last_col=sensorlist[-1:]
+            last_col=last_col[0]
+            last_col=last_col.name
+            
+            # getting current column properties
+            colname,num_nodes,seg_len= s.name,s.nos,s.seglen
+        
+            # list of working nodes     
+            node_list = range(1, num_nodes + 1)
+            not_working = node_status.loc[(node_status.site == colname) & (node_status.node <= num_nodes)]
+            not_working_nodes = not_working['node'].values  
+            for i in not_working_nodes:
+                node_list.remove(i)
+        
+            proc_monitoring,monwin=generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops)    
+
+            xz_series_list,xy_series_list = create_series_list(proc_monitoring,monwin,colname,num_nodes)
+    #            print "create_series_list tapos na"
+            # create, fill and smooth dataframes from series lists
+            xz=create_fill_smooth_df(xz_series_list,num_nodes,monwin, roll_window_numpts,to_fill,to_smooth)
+            xy=create_fill_smooth_df(xy_series_list,num_nodes,monwin, roll_window_numpts,to_fill,to_smooth)
+            
+            # computing instantaneous velocity
+            vel_xz, vel_xy = compute_node_inst_vel(xz,xy,roll_window_numpts)
+            
+            # computing cumulative displacements
+            cs_x, cs_xz, cs_xy=compute_col_pos(xz,xy,monwin.index[-1], col_pos_interval, col_pos_num,seg_len)
+        
+            # processing dataframes for output
+            xz,xy,xz_0off,xy_0off,vel_xz,vel_xy, vel_xz_0off, vel_xy_0off,cs_x,cs_xz,cs_xy,cs_xz_0,cs_xy_0 = df_to_out(colname,xz,xy,
+                                                                                                                       vel_xz,vel_xy,
+                                                                                                                       cs_x,cs_xz,cs_xy,
+#                                                                                                                       proc_file_path,
+                                                                                                                       CSVFormat)
+                                                                                                                                  
+            # Alert generation
+#            alert_out=alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,
+#                                       num_nodes_to_check,custom_end,CSVFormat,colarrange)
+            alert_out=alert_generation(colname,xz,xy,vel_xz,vel_xy,num_nodes, T_disp, T_velL2, T_velL3, k_ac_ax,num_nodes_to_check,custom_end,CSVFormat,colarrange)                                                                                                                                  
+    
+        alert_out = alert_out.reset_index(level = ['id'])
+        alert_out = alert_out[['id','disp_alert','vel_alert','node_alert','col_alert']]
+        alert_out = alert_out[(alert_out['vel_alert'] > 0 ) | (alert_out.node_alert == 'l2')]
+        alert_out = alert_out[alert_out.id == 1]
+        alert_out['site'] = sites
+        summary = pd.concat((summary,alert_out),axis = 0)
+#        except:
+#            print "Error recreating alarm."
+#            continue
     print "--------------------Filtering chenes----------------------"
     print "--------------------Store yung mga nafilter----------------------"
     
     for j in range(0,len(summary)):
 #        try:
         sites,custom_end = time_site(j,summary)
+#        print "custom_end -------------> %s" %str(custom_end)
         sensorlist = qdb.GetSensorList(sites)
         for s in sensorlist:
         
@@ -654,9 +665,8 @@ def worker(first_target,last_target):
                 node_list.remove(i)
         
 #            proc_monitoring,monwin=generate_proc(colname, num_nodes, seg_len, custom_end,f=True)
-            proc_monitoring,monwin=generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops,f=True)    
-            
-            
+            proc_monitoring,monwin=generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops,filt=True)    
+     
             xz_series_list,xy_series_list = create_series_list(proc_monitoring,monwin,colname,num_nodes)
     
             xz=create_fill_smooth_df(xz_series_list,num_nodes,monwin, roll_window_numpts,to_fill,to_smooth)
@@ -707,7 +717,7 @@ def worker(first_target,last_target):
         try:
             sites,custom_end = time_site(k,s_f)
             ce =  custom_end.strftime("%y_%m_%d__%H_%M")
-            fname = "FILTERED_" +str(sites) + "_" + ce + "_045_045"
+            fname = "FILTERED_" +str(sites) + "_" + ce + "_049_049"
             sensorlist = qdb.GetSensorList(sites)
             
             for s in sensorlist:
@@ -728,7 +738,7 @@ def worker(first_target,last_target):
                 # importing proc_monitoring file of current column to dataframe
             #    try:
             #            print "proc_monitoring here: "
-                proc_monitoring=generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops,f=True,for_plots=True)
+                proc_monitoring=generate_proc(colname, num_nodes, seg_len, custom_end,roll_window_length,data_dt,rt_window_length,num_roll_window_ops,filt=True,for_plots=True)
             #    print proc_monitoring
                 proc_monitoring = proc_monitoring[proc_monitoring.id == 1]
                 ffd.plotter(proc_monitoring,fname=fname)
@@ -739,7 +749,6 @@ def worker(first_target,last_target):
         try:
             sites,custom_end = time_site(k,s_a)
             ce =  custom_end.strftime("%y_%m_%d__%H_%M")
-            fname = "ALARMS_" +str(sites) + "_" + ce + "_045_045"
             
             sensorlist = qdb.GetSensorList(sites)
             for s in sensorlist:
@@ -770,9 +779,10 @@ def worker(first_target,last_target):
             
 
 if __name__ == '__main__':    
-    
-    pool = mp.Pool(mp.cpu_count()) #use all available cores, otherwise specify the number you want as an argument
-    for i in xrange(0, 412):
+    start = datetime.now()
+    pool = mp.Pool(1) #use all available cores, otherwise specify the number you want as an argument
+    for i in xrange(0, 2):
         pool.apply_async(worker, args=(i,i+1))
     pool.close()
     pool.join()
+    print "Time it took --->>> %s" %str(datetime.now() - start)
